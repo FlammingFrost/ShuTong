@@ -400,6 +400,7 @@ You have access to these calculator tools:
 - compare_expressions: Check if two expressions are equivalent
 
 Use these tools as needed to verify calculations. You can call them multiple times.
+The tool results (including both successful results and errors) will be available in the conversation history for you to reference.
 
 After verifying all necessary calculations, provide your final critique using the following format:
 
@@ -407,13 +408,13 @@ After verifying all necessary calculations, provide your final critique using th
 [TRUE or FALSE]
 
 ===LOGICAL_FEEDBACK===
-[Your detailed explanation of logical correctness. You can use LaTeX math notation with $ or $$ delimiters.]
+[If FALSE: Provide detailed explanation of the logical error. If TRUE: You can simply write "Correct" or leave empty to save time.]
 
 ===CALCULATION_CORRECTNESS===
 [TRUE or FALSE]
 
 ===CALCULATION_FEEDBACK===
-[Your explanation including tool verification results. You can use LaTeX math notation with $ or $$ delimiters.]
+[If FALSE: Provide detailed explanation including tool verification results showing the error. If TRUE: You can simply write "Correct" or leave empty to save time.]
 
 ===KNOWLEDGE_POINTS===
 [Comma-separated list of knowledge point tags, e.g., induction, gamma_distribution, transformation_of_variables]
@@ -649,14 +650,28 @@ Please analyze this step, using calculator tools to verify any calculations, the
             "",
             "Logical Correctness:",
             f"  Status: {'✓ Correct' if critique['is_logically_correct'] else '✗ Incorrect'}",
-            f"  Feedback: {critique['logic_feedback']}",
+        ]
+        
+        # Only show feedback if it's not empty or not just "Correct"
+        logic_feedback = critique['logic_feedback'].strip()
+        if logic_feedback and logic_feedback.lower() != "correct":
+            lines.append(f"  Feedback: {logic_feedback}")
+        
+        lines.extend([
             "",
             "Calculation Correctness:",
             f"  Status: {'✓ Correct' if critique['is_calculation_correct'] else '✗ Incorrect'}",
-            f"  Feedback: {critique['calculation_feedback']}",
+        ])
+        
+        # Only show feedback if it's not empty or not just "Correct"
+        calc_feedback = critique['calculation_feedback'].strip()
+        if calc_feedback and calc_feedback.lower() != "correct":
+            lines.append(f"  Feedback: {calc_feedback}")
+        
+        lines.extend([
             "",
             "Knowledge Points:",
-        ]
+        ])
         
         for kp in critique['knowledge_points']:
             lines.append(f"  - {kp}")

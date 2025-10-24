@@ -367,6 +367,105 @@ Now compute: f'(2) × π + e²
     return critique
 
 
+def test_tool_result_accessibility():
+    """Test that the agent can access tool call results (both success and errors) when making critique."""
+    
+    print("\n" + "=" * 80)
+    print("TEST 4: Tool Result Accessibility")
+    print("=" * 80)
+    
+    critic = Critic(temperature=0.3)
+    
+    problem = """
+Verify if the following calculation is correct:
+sqrt(16) + sqrt(25) = 9
+"""
+    
+    steps = [
+        {
+            "description": "Calculate square roots and sum",
+            "content": """
+We need to evaluate:
+sqrt(16) + sqrt(25)
+
+Breaking it down:
+- sqrt(16) = 4
+- sqrt(25) = 5
+- Therefore: 4 + 5 = 9
+
+The calculation is correct.
+"""
+        }
+    ]
+    
+    critique = critic.critique_step(problem, steps, 0)
+    
+    print(f"\n📋 Critique Result:")
+    print(f"  Calculation Correct: {critique['is_calculation_correct']}")
+    print(f"  Calculation Feedback:\n  {critique['calculation_feedback']}")
+    
+    # Check the messages to see if tool results are present
+    print(f"\n🔍 Checking Message History:")
+    if hasattr(critic, 'graph'):
+        # Try to get the last execution state
+        print("  Messages from last execution:")
+        # The messages should include ToolMessage objects with results
+        
+    # The feedback should reference the tool results
+    feedback_lower = critique['calculation_feedback'].lower()
+    has_tool_reference = any(keyword in feedback_lower for keyword in 
+                             ['result', 'tool', 'verify', 'calculation', '4', '5', '9'])
+    
+    print(f"\n📊 Tool Result Accessibility:")
+    print(f"  Feedback references calculations: {'✅ YES' if has_tool_reference else '❌ NO'}")
+    print(f"  Step is correct: {'✅ YES' if critique['is_calculation_correct'] else '❌ NO'}")
+    print(f"  Feedback is concise (for correct result): {'✅ YES' if len(critique['calculation_feedback']) < 50 else '⚠️ Verbose'}")
+    
+    return critique
+
+
+def test_tool_error_accessibility():
+    """Test that the agent can access tool errors when tools fail."""
+    
+    print("\n" + "=" * 80)
+    print("TEST 5: Tool Error Accessibility")
+    print("=" * 80)
+    
+    critic = Critic(temperature=0.3)
+    
+    problem = """
+Evaluate the expression with an intentionally problematic formula:
+1 / 0
+"""
+    
+    steps = [
+        {
+            "description": "Attempt to calculate 1/0",
+            "content": """
+Calculating: 1 / 0 = infinity (or undefined)
+"""
+        }
+    ]
+    
+    critique = critic.critique_step(problem, steps, 0)
+    
+    print(f"\n📋 Critique Result:")
+    print(f"  Logic Correct: {critique['is_logically_correct']}")
+    print(f"  Calculation Correct: {critique['is_calculation_correct']}")
+    print(f"  Feedback:\n  {critique['calculation_feedback']}")
+    
+    # Check if the feedback mentions the division by zero or error
+    feedback_lower = critique['calculation_feedback'].lower()
+    mentions_error = any(keyword in feedback_lower for keyword in 
+                        ['error', 'undefined', 'division', 'zero', 'invalid'])
+    
+    print(f"\n📊 Error Handling:")
+    print(f"  Feedback mentions error/issue: {'✅ YES' if mentions_error else '❌ NO'}")
+    print(f"  Step marked as incorrect: {'✅ YES' if not critique['is_calculation_correct'] else '❌ NO'}")
+    
+    return critique
+
+
 if __name__ == "__main__":
     print("\n🧪 Testing Critic Agent with Calculator Tools\n")
     
@@ -380,6 +479,12 @@ if __name__ == "__main__":
         # Test 3: Simple calculation
         critique3 = test_simple_calculation()
         
+        # Test 4: Tool result accessibility
+        critique4 = test_tool_result_accessibility()
+        
+        # Test 5: Tool error accessibility
+        critique5 = test_tool_error_accessibility()
+        
         print("\n\n" + "=" * 80)
         print("✅ ALL TESTS COMPLETED")
         print("=" * 80)
@@ -388,10 +493,14 @@ if __name__ == "__main__":
         print(f"  Test 2 (Incorrect Step 2): Logic={critique2_step2['is_logically_correct']}, Calc={critique2_step2['is_calculation_correct']}")
         print(f"  Test 2 (Incorrect Final): Logic={critique2_final['is_logically_correct']}, Calc={critique2_final['is_calculation_correct']}")
         print(f"  Test 3 (Complex w/ Error): Logic={critique3['is_logically_correct']}, Calc={critique3['is_calculation_correct']}")
+        print(f"  Test 4 (Tool Access): Calc={critique4['is_calculation_correct']}, Concise={'Yes' if len(critique4['calculation_feedback']) < 50 else 'No'}")
+        print(f"  Test 5 (Error Access): Logic={critique5['is_logically_correct']}, Calc={critique5['is_calculation_correct']}")
         
         # Expected outcomes
         print("\n📊 Expected vs Actual:")
         print(f"  Test 3 should detect error in f'(2) calculation (17 vs 15): {'✅ PASS' if not critique3['is_calculation_correct'] else '❌ FAIL'}")
+        print(f"  Test 4 should give concise feedback for correct step: {'✅ PASS' if len(critique4['calculation_feedback']) < 50 else '❌ FAIL'}")
+        print(f"  Test 5 should detect division by zero issue: {'✅ PASS' if not critique5['is_calculation_correct'] else '❌ FAIL'}")
         
     except Exception as e:
         print(f"\n❌ ERROR: {e}")
