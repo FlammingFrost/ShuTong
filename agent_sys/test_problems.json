@@ -1,0 +1,16 @@
+{
+  "problems": [
+    {
+      "id": "gamma_distribution_sum",
+      "title": "Gamma Distribution Sum Property",
+      "description": "Prove that the sum of independent gamma random variables follows a gamma distribution",
+      "problem": "If \\(X_i\\) are independently distributed according to \\(\\Gamma(\\alpha_i,b)\\), show that \\(\\sum X_i\\) is distributed as \\(\\Gamma(\\sum \\alpha_i,b)\\).\n\nHint: Method 1. Prove it first for the sum of two gamma variables by a transformation to \\(Y_1=X_1+X_2\\), \\(Y_2=X_1/X_2\\), and then use induction."
+    },
+    {
+      "id": "causal_inference_ols",
+      "title": "Causal Inference with OLS Prediction Models",
+      "description": "Show properties of OLS estimators in treatment effect estimation",
+      "problem": "Assume we are given a data set \\((Z_i, X_i, Y_i)_{i=1}^n\\). Using data only from the treatment group \\(\\{i : Z_i = 1\\}\\), we can build an OLS prediction model for \\(Y\\):\n$$\\hat{\\mu}_1(x) = \\hat{\\gamma}_1 + \\hat{\\beta}_1^{\\top} x$$\n\nMore precisely,\n$$(\\hat{\\beta}_1, \\hat{\\gamma}_1) = \\arg\\min_{\\beta_1, \\gamma_1} \\sum_{i: Z_i=1} (Y_i - \\gamma_1 - \\beta_1^{\\top} X_i)^2$$\n\nSimilarly, using data only from the control group \\(\\{i : Z_i = 0\\}\\), we can train an OLS model for \\(Y\\):\n$$\\hat{\\mu}_0(x) = \\hat{\\gamma}_0 + \\hat{\\beta}_0^{\\top} x$$\n\nUsing these predictions, form the following estimator:\n$$\\hat{\\tau}_{pred} = \\frac{1}{n} \\left( \\sum_{i: Z_i=1} Y_i + \\sum_{i: Z_i=0} \\hat{\\mu}_1(X_i) - \\sum_{i: Z_i=1} \\hat{\\mu}_0(X_i) - \\sum_{i: Z_i=0} Y_i \\right)$$\n\nUsing properties of ordinary least-squares, show that:\n1. \\(\\hat{\\gamma}_1 = \\frac{1}{n_1} \\sum_{i: Z_i=1} (Y_i - \\hat{\\beta}_1^{\\top} X_i)\\)\n2. Use this to show \\(\\sum_{i: Z_i=1} Y_i = \\sum_{i: Z_i=1} \\hat{\\mu}_1(X_i)\\)\n3. Similarly, show that \\(\\sum_{i: Z_i=0} Y_i = \\sum_{i: Z_i=0} \\hat{\\mu}_0(X_i)\\)"
+    }
+  ]
+}
