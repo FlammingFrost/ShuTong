@@ -74,19 +74,37 @@ class Critic:
         @tool
         def evaluate_numerical(expression: str, variables: Optional[Dict[str, Any]] = None) -> str:
             """
-            Evaluate a mathematical expression numerically.
+            Evaluate a mathematical expression numerically. Supports LaTeX and plain Python syntax.
             
             Args:
-                expression: Mathematical expression as string (e.g., "2*x + 3")
+                expression: Mathematical expression as LaTeX or plain string
                 variables: Dictionary of variable values (e.g., {"x": 5} or {"x": 5.0})
                 
             Returns:
                 String with the numerical result or error message
                 
+            Supported LaTeX features:
+                - Fractions: \\tfrac{1}{2}, \\frac{a}{b}
+                - Trigonometry: \\sin(x), \\cos(x), \\tan(x)
+                - Powers: x^{2}, e^{x}
+                - Square roots: \\sqrt{x}, \\sqrt{a^2 + b^2}
+                - Single definite integrals: \\int_{a}^{b} f(x) \\, dx
+                - Logarithms: \\ln(x), \\log(x)
+                - Constants: \\pi, e (automatically converted)
+                - Parentheses: \\left(...\\right)
+                
+            NOT supported:
+                - Multiple integrals in one expression: \\int...dx + \\int...dx (evaluate separately)
+                - Partial derivatives: \\frac{\\partial f}{\\partial x}
+                - Summations/Products: \\sum, \\prod
+                - Limits: \\lim_{x \\to a}
+                - Complex matrix operations
+                
             Examples:
-                evaluate_numerical("2*5 + 3") -> "13.0"
-                evaluate_numerical("2*x + 3", {"x": 5}) -> "13.0"
-                evaluate_numerical("sin(pi/2)") -> "1.0"
+                evaluate_numerical(r"\\tfrac{1}{2} + \\tfrac{3}{4}") -> "Result: 1.25"
+                evaluate_numerical(r"\\int_{0}^{\\pi} \\sin(x) \\, dx") -> "Result: 2.0"
+                evaluate_numerical(r"\\frac{2x+3}{x-1}", {"x": 5}) -> "Result: 3.25"
+                evaluate_numerical(r"\\sin^{2}(\\pi/4) + \\cos^{2}(\\pi/4)") -> "Result: 1.0"
             """
             try:
                 # Convert to float if needed
@@ -103,20 +121,35 @@ class Critic:
         @tool
         def evaluate_symbolic(expression: str, variables: Optional[Dict[str, Any]] = None, simplify: bool = False) -> str:
             """
-            Evaluate a mathematical expression symbolically.
+            Evaluate a mathematical expression symbolically. Supports LaTeX and plain Python syntax.
             
             Args:
-                expression: Mathematical expression as string
+                expression: Mathematical expression as LaTeX or plain string
                 variables: Dictionary of variable values (can be symbolic strings or numeric values)
-                simplify: Whether to simplify the result
+                simplify: Whether to simplify the result (True recommended for complex expressions)
                 
             Returns:
                 String with the symbolic result or error message
                 
+            Supported LaTeX features:
+                - Fractions: \\frac{a}{b}, \\tfrac{1}{2}
+                - Powers: x^{n}, (x+1)^{2}
+                - Polynomials: x^{3} + 2x^{2} - 5x + 3
+                - Rational functions: \\frac{x^{2}-1}{x-1}
+                - Nested expressions: \\frac{1}{1+\\frac{1}{x}}
+                - Basic operations: +, -, *, /
+                
+            NOT supported:
+                - Derivatives: \\frac{d}{dx}, \\frac{\\partial}{\\partial x}
+                - Integrals: \\int (evaluated numerically only)
+                - Summations: \\sum
+                - Matrix operations
+                - Differential equations
+                
             Examples:
-                evaluate_symbolic("x**2 + 2*x + 1") -> "x**2 + 2*x + 1"
-                evaluate_symbolic("(x + 1)**2", simplify=True) -> "x**2 + 2*x + 1"
-                evaluate_symbolic("2*x + 3", {"x": 5}) -> "13"
+                evaluate_symbolic(r"(x+1)^{2}", simplify=True) -> "Result: x**2 + 2*x + 1"
+                evaluate_symbolic(r"\\frac{x^{3} + x^{2} - x - 1}{x^{2} - 1}", simplify=True) -> "Result: x + 1"
+                evaluate_symbolic(r"x^{3} - 3x^{2} + 3x - 1", simplify=True) -> "Result: (x - 1)**3"
             """
             try:
                 # Convert variables to strings if needed for symbolic evaluation
@@ -132,20 +165,39 @@ class Critic:
         @tool
         def verify_calculation(expression: str, expected_result: str, variables: Optional[Dict[str, Any]] = None) -> str:
             """
-            Verify if a calculation is correct by checking if expression equals expected result.
+            Verify if a calculation is correct by checking algebraic/numerical equivalence. Supports LaTeX.
             
             Args:
-                expression: Mathematical expression to evaluate
-                expected_result: Expected result (can be numeric or symbolic string)
+                expression: Mathematical expression to evaluate (LaTeX or plain)
+                expected_result: Expected result (numeric or symbolic string; LaTeX or plain)
                 variables: Optional variable values for substitution
                 
             Returns:
                 String indicating whether the calculation is correct with explanation
                 
+            Use cases:
+                - Verify numeric calculations with/without variables
+                - Check symbolic algebraic equivalence (e.g., expanded vs factored forms)
+                - Validate trigonometric identities
+                - Confirm polynomial expansions
+                - Verify definite integral results
+                
+            Supported LaTeX features (same as evaluate_numerical and evaluate_symbolic):
+                - Fractions, powers, trig functions, single integrals
+                - Polynomials, rational functions
+                - Constants: \\pi, e
+                
+            NOT supported:
+                - Multiple integrals in expression
+                - Partial derivatives, limits
+                - Matrix operations
+                - Some complex logarithm identities (e.g., \\ln(x^2) vs 2\\ln(x) may fail due to domain)
+                
             Examples:
-                verify_calculation("2 + 2", "4") -> "✓ Calculation correct: 2 + 2 = 4.0"
-                verify_calculation("x**2 + 2*x + 1", "(x+1)**2") -> "✓ Expressions are mathematically equivalent"
-                verify_calculation("2*x + 3", "13", {"x": 5}) -> "✓ Calculation correct: 2*x + 3 = 13.0"
+                verify_calculation(r"\\tfrac{1}{2} + \\tfrac{1}{3}", "0.8333") -> "✓ Calculation correct: ..."
+                verify_calculation(r"\\sin(2x)", r"2\\sin(x)\\cos(x)") -> "✓ Expressions are mathematically equivalent"
+                verify_calculation(r"(x+1)(x+2)", r"x^{2} + 3x + 2") -> "✓ Expressions are mathematically equivalent"
+                verify_calculation(r"\\int_{0}^{\\pi} \\sin(x) \\, dx", "2.0") -> "✓ Calculation correct: ..."
             """
             try:
                 # Try to convert expected_result to float if it's numeric
@@ -169,19 +221,40 @@ class Critic:
         @tool
         def compare_expressions(expr1: str, expr2: str, variables: Optional[Dict[str, Any]] = None) -> str:
             """
-            Compare two mathematical expressions for equivalence.
+            Compare two mathematical expressions for symbolic or numerical equivalence. Supports LaTeX.
             
             Args:
-                expr1: First expression
-                expr2: Second expression
+                expr1: First expression (LaTeX or plain)
+                expr2: Second expression (LaTeX or plain)
                 variables: Optional variable values for numeric comparison
                 
             Returns:
                 String indicating whether expressions are equivalent
                 
+            Use cases:
+                - Check if two different forms are algebraically equivalent
+                - Verify trigonometric identities
+                - Compare factored vs expanded polynomials
+                - Validate rational function simplifications
+                
+            Supported LaTeX features (same as evaluate_symbolic):
+                - Fractions: \\frac{a}{b}
+                - Polynomials: x^{n} + ...
+                - Rational functions with simplification
+                - Trigonometric expressions: \\sin^{2}(x) + \\cos^{2}(x)
+                - Exponential expressions: e^{x+y} vs e^{x} \\cdot e^{y}
+                
+            NOT supported:
+                - Expressions requiring advanced simplification heuristics
+                - Some logarithm identities (domain issues)
+                - Matrix/vector operations
+                - Differential/integral equations
+                
             Examples:
-                compare_expressions("x**2 + 2*x + 1", "(x+1)**2") -> "✓ Expressions are symbolically equivalent"
-                compare_expressions("2*x", "x + x") -> "✓ Expressions are symbolically equivalent"
+                compare_expressions(r"x^{2} + 2x + 1", r"(x+1)^{2}") -> "✓ Expressions are symbolically equivalent"
+                compare_expressions(r"\\frac{x^{4} - 1}{x^{2} - 1}", r"x^{2} + 1") -> "✓ Expressions are symbolically equivalent"
+                compare_expressions(r"\\tan^{2}(x) + 1", r"\\sec^{2}(x)") -> "✓ Expressions are symbolically equivalent"
+                compare_expressions(r"e^{x+y}", r"e^{x} \\cdot e^{y}") -> "✓ Expressions are symbolically equivalent"
             """
             try:
                 # Convert variables to float if provided
