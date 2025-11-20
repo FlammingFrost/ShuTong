@@ -28,7 +28,7 @@ class Critic:
     for each step in a mathematical solution. Uses a calculator tool for verification.
     """
     
-    def __init__(self, model_name: str = "gpt-4o", temperature: float = 0.3, api_key: str = None, tracker=None):
+    def __init__(self, model_name: str = "gpt-4o", temperature: float = 0.3, api_key: str = None, tracker=None, max_tool_iterations: int = 3):
         """
         Initialize the Critic Agent.
         
@@ -37,10 +37,12 @@ class Critic:
             temperature: Temperature for generation (default: 0.3, lower for more consistent evaluation)
             api_key: OpenAI API key (optional, will use environment variable if not provided)
             tracker: Tracker instance for logging tool usage (optional)
+            max_tool_iterations: Maximum number of tool-calling iterations per step (default: 3)
         """
         self.model_name = model_name
         self.temperature = temperature
         self.tracker = tracker
+        self.max_tool_iterations = max_tool_iterations
         
         # Initialize the calculator for mathematical verification
         self.calculator = MathCalculator()
@@ -61,6 +63,7 @@ class Critic:
             
         self.llm = ChatOpenAI(**llm_kwargs)
         self.llm_with_tools = self.llm.bind_tools(self.tools)
+        self.llm_without_tools = self.llm  # Same instance but will be used without bind_tools
         
         # Build the LangGraph workflow
         self.graph = self._build_graph()
@@ -400,6 +403,16 @@ class Critic:
         
         # Check if the last message has tool calls
         if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+            # Count how many tool iterations we've done
+            tool_iterations = 0
+            for msg in messages:
+                if isinstance(msg, ToolMessage):
+                    tool_iterations += 1
+            
+            # Check if we've exceeded the max iterations
+            if tool_iterations >= self.max_tool_iterations:
+                return "end"
+            
             return "tools"
         
         return "end"
@@ -432,7 +445,34 @@ class Critic:
                 HumanMessage(content=user_prompt)
             ]
         
-        # Call LLM with tools
+        # Check if we've hit the tool iteration limit
+        tool_iterations = sum(1 for msg in messages if isinstance(msg, ToolMessage))
+        hit_tool_limit = tool_iterations >= self.max_tool_iterations
+        
+        # If we hit the limit, force a final response without tool calling
+        if hit_tool_limit:
+            # Add a message to prompt for final critique
+            force_final_message = HumanMessage(
+                content="You have reached the maximum number of tool calls. Please provide your final critique now in the structured format based on the information gathered so far."
+            )
+            messages_for_final = messages + [force_final_message]
+            
+            # Call LLM without tools binding to prevent tool calling
+            response = self.llm_without_tools.invoke(messages_for_final)
+            updated_messages = messages_for_final + [response]
+            
+            # Parse the final critique
+            critique = self._parse_critique(state, updated_messages)
+            
+            return {
+                "math_problem": state["math_problem"],
+                "solution_steps": state["solution_steps"],
+                "target_step_index": state["target_step_index"],
+                "messages": updated_messages,
+                "critique": critique,
+            }
+        
+        # Call LLM with tools (normal flow)
         response = self.llm_with_tools.invoke(messages)
         
         # Add response to messages
@@ -466,7 +506,7 @@ class Critic:
 
 For each step, you should:
 1. Evaluate the logical correctness of the reasoning
-2. Verify any calculations using the calculator tools provided
+2. Verify calculations ONLY when they are complex or non-trivial (use the calculator tools sparingly)
 3. Identify relevant knowledge points (mathematical concepts, theorems, formulas)
 
 You have access to these calculator tools:
@@ -475,10 +515,15 @@ You have access to these calculator tools:
 - verify_calculation: Check if a calculation is correct
 - compare_expressions: Check if two expressions are equivalent
 
-Use these tools as needed to verify calculations. You can call them multiple times.
+IMPORTANT: Only use calculator tools for complex calculations that are difficult to verify mentally:
+- Simple arithmetic (e.g., 18 - 6 = 12, 12 + 6 = 18): Do NOT verify with tools
+- Basic fractions (e.g., 1/3 of 18 = 6): Do NOT verify with tools
+- Obvious algebraic simplifications: Do NOT verify with tools
+- Complex integrals, derivatives, or multi-step algebraic manipulations: USE tools to verify
+
 The tool results (including both successful results and errors) will be available in the conversation history for you to reference.
 
-After verifying all necessary calculations, provide your final critique using the following format:
+After evaluating the step (with or without tools), provide your final critique using the following format:
 
 ===LOGICAL_CORRECTNESS===
 [TRUE or FALSE]
@@ -689,7 +734,8 @@ Please analyze this step, using calculator tools to verify any calculations, the
     def critique_all_steps(
         self,
         math_problem: str,
-        solution_steps: List[dict]
+        solution_steps: List[dict],
+        stop_at_first_error: bool = False
     ) -> List[StepCritique]:
         """
         Critique all steps in a solution sequentially.
@@ -697,15 +743,21 @@ Please analyze this step, using calculator tools to verify any calculations, the
         Args:
             math_problem: The original math problem
             solution_steps: List of solution steps (from solver agent)
+            stop_at_first_error: If True, stop critiquing after finding the first error
             
         Returns:
-            List of critiques, one for each step
+            List of critiques, one for each step (or up to first error if stop_at_first_error=True)
         """
         critiques = []
         
         for i in range(len(solution_steps)):
             critique = self.critique_step(math_problem, solution_steps, i)
             critiques.append(critique)
+            
+            # Stop if we found an error and stop_at_first_error is True
+            if stop_at_first_error:
+                if not critique['is_logically_correct'] or not critique['is_calculation_correct']:
+                    break
         
         return critiques
     

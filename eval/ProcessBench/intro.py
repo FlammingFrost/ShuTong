@@ -2,7 +2,7 @@ import json
 from datasets import load_dataset
 
 dataset = load_dataset('Qwen/ProcessBench', split='math')
-print(json.dumps(dataset[0], indent=2))
+print(json.dumps(dataset[7], indent=2))
 print(len(dataset))
 # import pdb; pdb.set_trace()
 

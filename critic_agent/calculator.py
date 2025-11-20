@@ -83,19 +83,31 @@ class MathCalculator:
 
         # Try SymPy string parsing with known constants
         try:
-            return sp.sympify(expr_str, locals=self.constants)
+            # First, try parsing with transformations for implicit multiplication and power conversion
+            from sympy.parsing.sympy_parser import (
+                parse_expr, 
+                standard_transformations, 
+                implicit_multiplication_application,
+                convert_xor
+            )
+            transformations = standard_transformations + (implicit_multiplication_application, convert_xor)
+            return parse_expr(expr_str, local_dict=self.constants, transformations=transformations)
         except Exception:
-            # If sympify fails and we haven't tried LaTeX yet, try it now
-            if not has_latex_commands and _HAS_LATEX and _parse_latex is not None:
-                try:
-                    expr = _parse_latex(expr_str)
-                    # Substitute constants
-                    expr = expr.subs('pi', sp.pi).subs('e', sp.E).subs('I', sp.I)
-                    return expr
-                except Exception:
-                    pass
-            # Re-raise the original sympify error
-            raise
+            # Fall back to basic sympify
+            try:
+                return sp.sympify(expr_str, locals=self.constants)
+            except Exception:
+                # If sympify fails and we haven't tried LaTeX yet, try it now
+                if not has_latex_commands and _HAS_LATEX and _parse_latex is not None:
+                    try:
+                        expr = _parse_latex(expr_str)
+                        # Substitute constants
+                        expr = expr.subs('pi', sp.pi).subs('e', sp.E).subs('I', sp.I)
+                        return expr
+                    except Exception:
+                        pass
+                # Re-raise the original sympify error
+                raise
     
     def evaluate_numerical(
         self,

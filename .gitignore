@@ -5,3 +5,5 @@ data/tracker/*
 .env*
 *.egg-info/
 .vscode/
+
+results/

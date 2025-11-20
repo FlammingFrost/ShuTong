@@ -80,8 +80,8 @@ def evaluate_single_problem(
     solution_steps = convert_to_solution_steps(steps)
     
     try:
-        # Run critic on all steps
-        critiques = critic.critique_all_steps(problem, solution_steps)
+        # Run critic on all steps, stopping at first error
+        critiques = critic.critique_all_steps(problem, solution_steps, stop_at_first_error=True)
         
         # Find first error detected by critic
         predicted_error_step = find_first_error(critiques)
@@ -201,39 +201,70 @@ def calculate_metrics(results: List[Dict]) -> Dict:
 
 
 def run_evaluation(
-    max_samples: Optional[int] = None,
+    start_index: int = 0,
+    end_index: Optional[int] = None,
     sleep_time: float = 0.5,
-    output_file: str = "eval_results.json"
+    run_name: str = "default_run"
 ) -> Dict:
     """
     Run evaluation on ProcessBench math split.
     
     Args:
-        max_samples: Maximum number of samples to process (None for all)
+        start_index: Starting index (inclusive) for evaluation
+        end_index: Ending index (exclusive) for evaluation (None for all remaining)
         sleep_time: Time to sleep between API calls
-        output_file: Path to save detailed results
+        run_name: Name of the run (creates directory results/{run_name}/)
         
     Returns:
         Dictionary with metrics and detailed results
     """
+    # Create output directory
+    output_dir = os.path.join("results", run_name)
+    os.makedirs(output_dir, exist_ok=True)
+    
     # Load dataset
     print("Loading ProcessBench dataset...")
     dataset = load_dataset('Qwen/ProcessBench', split='math')
     
-    if max_samples:
-        dataset = dataset.select(range(min(max_samples, len(dataset))))
+    # Determine the range
+    if end_index is None:
+        end_index = len(dataset)
+    end_index = min(end_index, len(dataset))
     
-    print(f"Processing {len(dataset)} samples...")
+    if start_index >= end_index:
+        print(f"Invalid range: start_index ({start_index}) >= end_index ({end_index})")
+        return {"metrics": {}, "results": []}
+    
+    print(f"Processing samples {start_index} to {end_index-1} (total: {end_index - start_index} samples)")
     
     # Initialize critic agent
     print("Initializing Critic agent...")
-    # critic = Critic(model_name="gpt-4o", temperature=0.3)
     critic = Critic(model_name="gpt-4o-mini-2024-07-18", temperature=0.3)
     
-    # Evaluate each problem
+    # Evaluate each problem in the range
     results = []
+    skipped = 0
     
-    for idx, item in enumerate(tqdm(dataset, desc="Evaluating")):
+    for idx in tqdm(range(start_index, end_index), desc="Evaluating"):
+        item = dataset[idx]
+        
+        # Check if result already exists and was successful
+        result_file = os.path.join(output_dir, f"result_{idx}.json")
+        if os.path.exists(result_file):
+            # Load existing result
+            with open(result_file, 'r') as f:
+                result = json.load(f)
+            
+            # Only skip if the result exists and has no error (success=True or error=None)
+            if result.get('success', False) and result.get('error') is None:
+                results.append(result)
+                skipped += 1
+                continue
+            else:
+                # Re-run if there was an error
+                print(f"\nRe-running sample {idx} due to previous error: {result.get('error', 'Unknown error')}")
+        
+        # Run evaluation
         result = evaluate_single_problem(
             critic=critic,
             problem=item['problem'],
@@ -244,21 +275,37 @@ def run_evaluation(
         result['id'] = item['id']
         result['index'] = idx
         results.append(result)
+        
+        # Save individual result immediately
+        with open(result_file, 'w') as f:
+            json.dump(result, f, indent=2)
+    
+    if skipped > 0:
+        print(f"\nSkipped {skipped} existing results")
     
     # Calculate metrics
     print("\nCalculating metrics...")
     metrics = calculate_metrics(results)
     
-    # Save detailed results
+    # Save aggregated results
     output_data = {
         "metrics": metrics,
-        "results": results
+        "results": results,
+        "config": {
+            "start_index": start_index,
+            "end_index": end_index,
+            "run_name": run_name,
+            "total_samples": end_index - start_index
+        }
     }
     
-    with open(output_file, 'w') as f:
+    summary_file = os.path.join(output_dir, "summary.json")
+    with open(summary_file, 'w') as f:
         json.dump(output_data, f, indent=2)
     
-    print(f"\nDetailed results saved to {output_file}")
+    print(f"\nResults saved to {output_dir}/")
+    print(f"  - Individual results: result_{{index}}.json")
+    print(f"  - Summary: summary.json")
     
     return output_data
 
@@ -287,15 +334,19 @@ def print_metrics(metrics: Dict):
 
 
 if __name__ == "__main__":
-    # Run evaluation on all 1000+ samples
-    # Adjust sleep_time based on your API rate limits
-    # OpenAI typically allows 500 requests/min for standard tier
-    # With sleep_time=0.5, we make ~2 requests/second = 120/min (safe)
+    # Run evaluation on a range of samples
+    # Adjust parameters as needed:
+    # - start_index: Starting index (inclusive)
+    # - end_index: Ending index (exclusive), None for all remaining
+    # - sleep_time: Time to sleep between API calls (adjust based on rate limits)
+    # - run_name: Name for this run (creates results/{run_name}/ directory)
     
+    # Example: Process first 100 samples
     output_data = run_evaluation(
-        max_samples=None,  # Process all samples
-        sleep_time=0.0005,     # 0.5 seconds between problems
-        output_file="eval_results.json"
+        start_index=0,
+        end_index=100,  # Set to None to process all samples
+        sleep_time=0.0005,
+        run_name="gpt-4o-mini"
     )
     
     print_metrics(output_data['metrics'])
