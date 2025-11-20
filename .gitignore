@@ -4,3 +4,4 @@ data/tracker/*
 .DS_Store
 .env*
 *.egg-info/
+.vscode/

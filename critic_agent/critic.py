@@ -52,6 +52,9 @@ class Critic:
         llm_kwargs = {
             "model": model_name,
             "temperature": temperature,
+            # 'reasoning': {
+            #     "effort": "minimal"
+            # }
         }
         if api_key:
             llm_kwargs["api_key"] = api_key
