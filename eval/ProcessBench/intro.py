@@ -2,8 +2,12 @@ import json
 from datasets import load_dataset
 
 dataset = load_dataset('Qwen/ProcessBench', split='math')
-print(json.dumps(dataset[7], indent=2))
+print(json.dumps(dataset[-1], indent=2))
 print(len(dataset))
+for item in dataset:
+    if item['final_answer_correct'] is True and item['label'] != -1:
+        print(json.dumps(item, indent=2))
+        break
 # import pdb; pdb.set_trace()
 
 
