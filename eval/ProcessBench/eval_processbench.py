@@ -343,8 +343,8 @@ if __name__ == "__main__":
     
     # Example: Process first 100 samples
     output_data = run_evaluation(
-        start_index=0,
-        end_index=100,  # Set to None to process all samples
+        start_index=500,
+        end_index=600,  # Set to None to process all samples
         sleep_time=0.0005,
         run_name="gpt-4o-mini"
     )
