@@ -5,7 +5,8 @@ This module integrates Solver and Critic agents into a unified workflow.
 """
 
 import uuid
-from typing import List, Dict, Optional
+import logging
+from typing import List, Dict, Optional, Callable, Any
 from langgraph.graph import StateGraph, END
 from solver_agent.solver import Solver
 from critic_agent.critic import Critic
@@ -34,7 +35,7 @@ class AgentPipeline:
         solver_temperature: float = 0.7,
         critic_temperature: float = 0.3,
         max_iterations: int = 1,
-        tracker_dir: str = "./data/tracker",
+        tracker_dir: Optional[str] = "./data/tracker",
         api_key: Optional[str] = None
     ):
         """
@@ -46,11 +47,14 @@ class AgentPipeline:
             solver_temperature: Temperature for solver
             critic_temperature: Temperature for critic
             max_iterations: Maximum refinement iterations (default: 3)
-            tracker_dir: Directory for tracker data
+            tracker_dir: Directory for tracker data (None to disable tracking)
             api_key: OpenAI API key (optional)
         """
-        # Initialize tracker first
-        self.tracker = Tracker(data_dir=tracker_dir)
+        # Initialize tracker only if tracker_dir is provided
+        if tracker_dir is not None:
+            self.tracker = Tracker(data_dir=tracker_dir)
+        else:
+            self.tracker = None
         
         # Initialize agents
         self.solver: Solver = Solver(
@@ -68,6 +72,12 @@ class AgentPipeline:
         
         # Store configuration
         self.max_iterations = max_iterations
+        
+        # Initialize logger
+        self.logger = logging.getLogger(__name__)
+        
+        # Streaming callback (set during run_stream)
+        self._stream_callback: Optional[Callable[[str, Any], None]] = None
         
         # Build the pipeline graph
         self.graph = self._build_graph()
@@ -119,22 +129,37 @@ class AgentPipeline:
         """
         math_problem = state["math_problem"]
         
-        # Track this operation with detailed step information
-        @self.tracker.track(
-            name="generate_initial_solution",
-            value={
-                "math_problem": "args[0]",
-                "solution_length": "len(ret[0][0])",
-                "num_steps": "len(ret[0][1])",
-                "solution_steps_detail": "ret[0][1]"  # Track detailed steps
-            }
-        )
+        # Emit streaming event
+        self._emit_event('stage', {'stage': 'solving', 'message': 'Generating solution...'})
+        
+        # Define the solve function
         def _solve(problem: str) -> tuple:
             solution = self.solver.solve(problem)
             steps = self.solver.get_solution_steps()
             return solution, steps
         
+        # Apply tracking only if tracker is enabled
+        if self.tracker:
+            _solve = self.tracker.track(
+                name="generate_initial_solution",
+                value={
+                    "math_problem": "args[0]",
+                    "solution_length": "len(ret[0][0])",
+                    "num_steps": "len(ret[0][1])",
+                    "solution_steps_detail": "ret[0][1]"
+                }
+            )(_solve)
+        
         initial_solution, solution_steps = _solve(math_problem)
+        
+        # Emit solution steps with step_number included in each step
+        for i, step in enumerate(solution_steps):
+            step_data = {
+                'step_number': i + 1,
+                'description': step.get('description', f'Step {i+1}'),
+                'content': step.get('content', '')
+            }
+            self._emit_event('solution_step', step_data)
         
         return {
             "math_problem": math_problem,
@@ -168,22 +193,38 @@ class AgentPipeline:
         else:
             solution_steps = state["solution_steps"]
         
-        # Track this operation with detailed critique information
-        @self.tracker.track(
-            name="critique_all_steps",
-            value={
-                "math_problem": "args[0]",
-                "num_steps": "len(args[1])",
-                "num_critiques": "len(ret[0])",
-                "issues_found": "sum(1 for c in ret[0] if not c['is_logically_correct'] or not c['is_calculation_correct'])",
-                "critiques_detail": "ret[0]"  # Track detailed critiques for each step
-            }
-        )
-        def _critique_all(problem: str, steps: List[Dict]) -> List:
-            critiques = self.critic.critique_all_steps(problem, steps)
-            return critiques
+        # Emit streaming event
+        iteration = state.get("iteration_count", 0) + 1
+        self._emit_event('stage', {
+            'stage': 'critiquing',
+            'message': f'Analyzing solution (iteration {iteration})...',
+            'iteration': iteration
+        })
         
-        all_critiques = _critique_all(math_problem, solution_steps)
+        # Track this operation with detailed critique information
+        def _critique_all(problem: str, steps: List[Dict]) -> tuple:
+            critiques, token_usage = self.critic.critique_all_steps(problem, steps)
+            return critiques, token_usage
+        
+        # Apply tracking only if tracker is enabled
+        if self.tracker:
+            _critique_all = self.tracker.track(
+                name="critique_all_steps",
+                value={
+                    "math_problem": "args[0]",
+                    "num_steps": "len(args[1])",
+                    "num_critiques": "len(ret[0])",
+                    "issues_found": "sum(1 for c in ret[0] if not c.get('is_logically_correct', True) or not c.get('is_calculation_correct', True))",
+                    "critiques_detail": "ret[0]",
+                    "token_usage": "ret[1]"
+                }
+            )(_critique_all)
+        
+        all_critiques, token_usage = _critique_all(math_problem, solution_steps)
+        
+        # Emit critique events
+        for critique in all_critiques:
+            self._emit_event('critique', critique)
         
         # Extract feedbacks and knowledge points
         feedbacks = []
@@ -209,19 +250,20 @@ class AgentPipeline:
                 if kp not in knowledge_points:
                     knowledge_points.append(kp)
         
-        # Track feedback collection
-        @self.tracker.track(
-            name="collect_feedback_and_knowledge",
-            value={
-                "num_feedbacks": "len(args[0])",
-                "num_knowledge_points": "len(args[1])",
-                "needs_refinement": "args[2]"
-            }
-        )
-        def _collect(fb: List[str], kp: List[str], needs_ref: bool) -> tuple:
-            return fb, kp, needs_ref
-        
-        _collect(feedbacks, knowledge_points, needs_refinement)
+        # Track feedback collection if tracker is enabled
+        if self.tracker:
+            @self.tracker.track(
+                name="collect_feedback_and_knowledge",
+                value={
+                    "num_feedbacks": "len(args[0])",
+                    "num_knowledge_points": "len(args[1])",
+                    "needs_refinement": "args[2]"
+                }
+            )
+            def _collect(fb: List[str], kp: List[str], needs_ref: bool) -> tuple:
+                return fb, kp, needs_ref
+            
+            _collect(feedbacks, knowledge_points, needs_refinement)
         
         return {
             "all_critiques": all_critiques,
@@ -241,23 +283,35 @@ class AgentPipeline:
             Updated state with refined solution
         """
         feedbacks = state["feedbacks"]
+        iteration_count = state["iteration_count"] + 1
         
-        # Track this operation with detailed step information
-        @self.tracker.track(
-            name="refine_solution",
-            value={
-                "num_feedbacks": "len(args[0])",
-                "feedbacks_detail": "args[0]",  # Track actual feedback content
-                "iteration": "args[1]",
-                "solution_length": "len(ret[0][0])",
-                "num_steps": "len(ret[0][1])",
-                "refined_steps_detail": "ret[0][1]"  # Track detailed refined steps
-            }
-        )
+        # Emit streaming event with identified errors/feedbacks
+        self._emit_event('stage', {
+            'stage': 'refining',
+            'message': f'Refining solution (iteration {iteration_count})...',
+            'iteration': iteration_count,
+            'errors': feedbacks  # Include identified errors from critiques
+        })
+        
+        # Define the refine function
         def _refine(fb: List[str], iteration: int) -> tuple:
             refined = self.solver.refine(fb)
             refined_steps = self.solver.get_solution_steps()
             return refined, refined_steps
+        
+        # Apply tracking only if tracker is enabled
+        if self.tracker:
+            _refine = self.tracker.track(
+                name="refine_solution",
+                value={
+                    "num_feedbacks": "len(args[0])",
+                    "feedbacks_detail": "args[0]",
+                    "iteration": "args[1]",
+                    "solution_length": "len(ret[0][0])",
+                    "num_steps": "len(ret[0][1])",
+                    "refined_steps_detail": "ret[0][1]"
+                }
+            )(_refine)
         
         iteration_count = state["iteration_count"] + 1
         refined_solution, refined_steps = _refine(feedbacks, iteration_count)
@@ -288,6 +342,57 @@ class AgentPipeline:
             return "refine"
         return "end"
     
+    def _emit_event(self, event_type: str, data: Any) -> None:
+        """
+        Emit a streaming event if callback is set.
+        
+        Args:
+            event_type: Type of event ('stage', 'solution_step', 'critique', etc.)
+            data: Event data
+        """
+        if self._stream_callback:
+            try:
+                self._stream_callback(event_type, data)
+            except Exception as e:
+                self.logger.error(f"Error in stream callback: {e}")
+    
+    def run_stream(
+        self, 
+        math_problem: str, 
+        max_iterations: Optional[int] = None,
+        callback: Optional[Callable[[str, Any], None]] = None,
+        run_id: Optional[str] = None
+    ) -> Dict:
+        """
+        Run the agent pipeline with streaming callbacks.
+        
+        Args:
+            math_problem: The math problem to solve
+            max_iterations: Maximum refinement iterations (overrides default)
+            callback: Callback function(event_type, data) for streaming updates
+            run_id: Optional run identifier (will be generated if not provided)
+            
+        Returns:
+            Same as run() - dictionary with final results
+        """
+        # Set the callback
+        self._stream_callback = callback
+        
+        try:
+            # Emit initialization event
+            self._emit_event('stage', {'stage': 'initializing', 'message': 'Starting pipeline...'})
+            
+            # Run the pipeline normally
+            result = self.run(math_problem, max_iterations, run_id)
+            
+            # Emit completion event
+            self._emit_event('stage', {'stage': 'completed', 'message': 'Pipeline completed'})
+            
+            return result
+        finally:
+            # Clear callback
+            self._stream_callback = None
+    
     def run(self, math_problem: str, max_iterations: Optional[int] = None, run_id: Optional[str] = None) -> Dict:
         """
         Run the agent pipeline on a math problem.
@@ -312,20 +417,11 @@ class AgentPipeline:
         if run_id is None:
             run_id = str(uuid.uuid4())
         
-        # Set run_id in tracker
-        self.tracker.set_run_id(run_id)
+        # Set run_id in tracker if tracker is enabled
+        if self.tracker:
+            self.tracker.set_run_id(run_id)
         
-        # Track the full pipeline run
-        @self.tracker.track(
-            name="pipeline_run",
-            value={
-                "run_id": "args[0]",
-                "math_problem": "args[1]",
-                "max_iterations": "args[2]",
-                "final_iteration_count": "ret[0]['iteration_count']",
-                "num_knowledge_points": "len(ret[0]['knowledge_points'])"
-            }
-        )
+        # Define the internal run function
         def _run_pipeline(rid: str, problem: str, max_iter: Optional[int]) -> Dict:
             # Initialize state
             initial_state: PipelineState = {
@@ -360,11 +456,26 @@ class AgentPipeline:
             return output
         
         try:
-            output = _run_pipeline(run_id, math_problem, max_iterations)
+            # Apply tracker decorator only if tracker is enabled
+            if self.tracker:
+                tracked_func = self.tracker.track(
+                    name="pipeline_run",
+                    value={
+                        "run_id": "args[0]",
+                        "math_problem": "args[1]",
+                        "max_iterations": "args[2]",
+                        "final_iteration_count": "ret[0]['iteration_count']",
+                        "num_knowledge_points": "len(ret[0]['knowledge_points'])"
+                    }
+                )(_run_pipeline)
+                output = tracked_func(run_id, math_problem, max_iterations)
+            else:
+                output = _run_pipeline(run_id, math_problem, max_iterations)
             return output
         finally:
-            # Clear run_id after pipeline completes
-            self.tracker.clear_run_id()
+            # Clear run_id after pipeline completes (only if tracker exists)
+            if self.tracker:
+                self.tracker.clear_run_id()
     
     def get_solution_text(self, result: Dict) -> str:
         """

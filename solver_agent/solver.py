@@ -4,6 +4,7 @@ Solver Agent implementation using LangGraph and GPT-4o.
 
 import os
 import re
+import logging
 from typing import List
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
@@ -33,6 +34,9 @@ class Solver:
         """
         self.model_name = model_name
         self.temperature = temperature
+        
+        # Initialize logger
+        self.logger = logging.getLogger(__name__)
         
         # Initialize the language model
         llm_kwargs = {
@@ -96,6 +100,7 @@ class Solver:
         
         # Parse the solution into steps
         steps = self._parse_solution_steps(solution)
+        self.logger.info(f"  [Solver] Parsed {len(steps)} steps from solution")
         
         return {
             "math_problem": math_problem,
@@ -114,6 +119,9 @@ class Solver:
         Returns:
             Formatted solution as a string
         """
+        self.logger.info(f"  [Solver] Generating initial solution...")
+        self.logger.info(f"  [Solver] Problem: {math_problem[:80]}...")
+        
         system_prompt = """You are an expert mathematics tutor. Your task is to solve math problems step-by-step with clear explanations.
 
 Format your solution as follows:
@@ -149,7 +157,9 @@ Thus, since the CDFs match, we conclude that $F(X)$ follows a uniform distributi
             HumanMessage(content=f"Please solve the following math problem:\n\n{math_problem}")
         ]
         
+        self.logger.info(f"  [Solver] Calling LLM to generate solution...")
         response = self.llm.invoke(messages)
+        self.logger.info(f"  [Solver] Solution generated ({len(response.content)} chars)")
         return response.content
     
     def _generate_refined_solution(
@@ -169,6 +179,10 @@ Thus, since the CDFs match, we conclude that $F(X)$ follows a uniform distributi
         Returns:
             Refined solution as a string
         """
+        self.logger.info(f"  [Solver] Refining solution based on {len(feedbacks)} feedback(s)...")
+        for i, fb in enumerate(feedbacks, 1):
+            self.logger.info(f"  [Solver]   Feedback {i}: {fb[:80]}...")
+        
         system_prompt = """You are an expert mathematics tutor. Your task is to refine math solutions based on feedback.
 
 Format your solution as follows:
@@ -197,7 +211,9 @@ Feedback to address:
 Please provide a refined solution that addresses all the feedback points.""")
         ]
         
+        self.logger.info(f"  [Solver] Calling LLM to refine solution...")
         response = self.llm.invoke(messages)
+        self.logger.info(f"  [Solver] Refined solution generated ({len(response.content)} chars)")
         return response.content
     
     def _parse_solution_steps(self, solution: str) -> List[SolutionStep]:

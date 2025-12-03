@@ -398,11 +398,12 @@ The calculation is correct.
         }
     ]
     
-    critique = critic.critique_step(problem, steps, 0)
+    critique, token_usage = critic.critique_step(problem, steps, 0)
     
     print(f"\n📋 Critique Result:")
     print(f"  Calculation Correct: {critique['is_calculation_correct']}")
     print(f"  Calculation Feedback:\n  {critique['calculation_feedback']}")
+    print(f"  Token Usage: {token_usage['input_tokens']} input, {token_usage['output_tokens']} output")
     
     # Check the messages to see if tool results are present
     print(f"\n🔍 Checking Message History:")
@@ -447,12 +448,13 @@ Calculating: 1 / 0 = infinity (or undefined)
         }
     ]
     
-    critique = critic.critique_step(problem, steps, 0)
+    critique, token_usage = critic.critique_step(problem, steps, 0)
     
     print(f"\n📋 Critique Result:")
     print(f"  Logic Correct: {critique['is_logically_correct']}")
     print(f"  Calculation Correct: {critique['is_calculation_correct']}")
     print(f"  Feedback:\n  {critique['calculation_feedback']}")
+    print(f"  Token Usage: {token_usage['input_tokens']} input, {token_usage['output_tokens']} output")
     
     # Check if the feedback mentions the division by zero or error
     feedback_lower = critique['calculation_feedback'].lower()

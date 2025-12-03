@@ -75,13 +75,13 @@ def evaluate_single_problem(
         sleep_time: Time to sleep after API calls to avoid rate limits
         
     Returns:
-        Dictionary with evaluation results
+        Dictionary with evaluation results including token usage
     """
     solution_steps = convert_to_solution_steps(steps)
     
     try:
         # Run critic on all steps, stopping at first error
-        critiques = critic.critique_all_steps(problem, solution_steps, stop_at_first_error=True)
+        critiques, token_usage = critic.critique_all_steps(problem, solution_steps, stop_at_first_error=True)
         
         # Find first error detected by critic
         predicted_error_step = find_first_error(critiques)
@@ -93,6 +93,8 @@ def evaluate_single_problem(
             "predicted_error_step": predicted_error_step,
             "ground_truth_label": label,
             "num_steps": len(steps),
+            "input_tokens": token_usage.get('input_tokens', 0),
+            "output_tokens": token_usage.get('output_tokens', 0),
             "success": True,
             "error": None
         }
@@ -102,6 +104,8 @@ def evaluate_single_problem(
             "predicted_error_step": -1,
             "ground_truth_label": label,
             "num_steps": len(steps),
+            "input_tokens": 0,
+            "output_tokens": 0,
             "success": False,
             "error": str(e)
         }
@@ -184,6 +188,15 @@ def calculate_metrics(results: List[Dict]) -> Dict:
     f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
     exact_match_rate = exact_matches / len(valid_results) if valid_results else 0.0
     
+    # Calculate token statistics
+    total_input_tokens = sum(r.get('input_tokens', 0) for r in valid_results)
+    total_output_tokens = sum(r.get('output_tokens', 0) for r in valid_results)
+    total_tokens = total_input_tokens + total_output_tokens
+    
+    avg_input_tokens = total_input_tokens / len(valid_results) if valid_results else 0.0
+    avg_output_tokens = total_output_tokens / len(valid_results) if valid_results else 0.0
+    avg_total_tokens = total_tokens / len(valid_results) if valid_results else 0.0
+    
     return {
         "accuracy": accuracy,
         "precision": precision,
@@ -196,7 +209,13 @@ def calculate_metrics(results: List[Dict]) -> Dict:
         "false_negatives": fn,
         "total_samples": len(results),
         "valid_samples": len(valid_results),
-        "failed_samples": len(results) - len(valid_results)
+        "failed_samples": len(results) - len(valid_results),
+        "total_input_tokens": total_input_tokens,
+        "total_output_tokens": total_output_tokens,
+        "total_tokens": total_tokens,
+        "avg_input_tokens": avg_input_tokens,
+        "avg_output_tokens": avg_output_tokens,
+        "avg_total_tokens": avg_total_tokens
     }
 
 
@@ -239,7 +258,7 @@ def run_evaluation(
     
     # Initialize critic agent
     print("Initializing Critic agent...")
-    critic = Critic(model_name="gpt-4o-mini-2024-07-18", temperature=0.3)
+    critic = Critic(model_name="gpt-5-mini-2025-08-07", temperature=0.3)
     
     # Evaluate each problem in the range
     results = []
@@ -330,6 +349,25 @@ def print_metrics(metrics: Dict):
     print(f"  False Positives: {metrics['false_positives']}")
     print(f"  True Negatives:  {metrics['true_negatives']}")
     print(f"  False Negatives: {metrics['false_negatives']}")
+    print()
+    print("Token Usage Statistics:")
+    print(f"  Total Input Tokens:  {metrics['total_input_tokens']:,}")
+    print(f"  Total Output Tokens: {metrics['total_output_tokens']:,}")
+    print(f"  Total Tokens:        {metrics['total_tokens']:,}")
+    print(f"  Avg Input Tokens:    {metrics['avg_input_tokens']:.1f}")
+    print(f"  Avg Output Tokens:   {metrics['avg_output_tokens']:.1f}")
+    print(f"  Avg Total Tokens:    {metrics['avg_total_tokens']:.1f}")
+    print()
+    print("Estimated Cost (assuming GPT-4o-mini pricing):")
+    # GPT-4o-mini pricing: $0.150 per 1M input tokens, $0.600 per 1M output tokens
+    # GPT-5-nano pricing: $0.05 per 1M input tokens, $0.4 per 1M output tokens
+    input_cost = (metrics['total_input_tokens'] / 1_000_000) * 0.150
+    output_cost = (metrics['total_output_tokens'] / 1_000_000) * 0.600
+    total_cost = input_cost + output_cost
+    print(f"  Input Cost:  ${input_cost:.4f}")
+    print(f"  Output Cost: ${output_cost:.4f}")
+    print(f"  Total Cost:  ${total_cost:.4f}")
+    print("\nNote: Use analyze.py for accurate model-specific cost estimates")
     print("="*80)
 
 
@@ -344,9 +382,9 @@ if __name__ == "__main__":
     # Example: Process first 100 samples
     output_data = run_evaluation(
         start_index=0,
-        end_index=100,  # Set to None to process all samples
+        end_index=None,  # Set to None to process all samples
         sleep_time=0.0005,
-        run_name="gpt-4o-mini"
+        run_name="gpt-5-mini"
     )
     
     print_metrics(output_data['metrics'])

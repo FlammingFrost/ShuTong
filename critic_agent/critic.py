@@ -5,7 +5,8 @@ Critic Agent implementation using LangGraph and GPT-4o.
 import os
 import json
 import re
-from typing import List, Dict, Optional, Annotated, Any
+import logging
+from typing import List, Dict, Optional, Annotated, Any, Tuple
 from datetime import datetime
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
@@ -43,6 +44,9 @@ class Critic:
         self.temperature = temperature
         self.tracker = tracker
         self.max_tool_iterations = max_tool_iterations
+        
+        # Initialize logger
+        self.logger = logging.getLogger(__name__)
         
         # Initialize the calculator for mathematical verification
         self.calculator = MathCalculator()
@@ -436,6 +440,9 @@ class Critic:
             solution_steps = state["solution_steps"]
             target_step_index = state["target_step_index"]
             
+            step_desc = solution_steps[target_step_index].get('description', f'Step {target_step_index+1}')
+            self.logger.debug(f"    [Critic] Initializing critique for: {step_desc}")
+            
             # Build the initial prompt
             system_prompt = self._build_system_prompt()
             user_prompt = self._build_user_prompt(math_problem, solution_steps, target_step_index)
@@ -451,6 +458,7 @@ class Critic:
         
         # If we hit the limit, force a final response without tool calling
         if hit_tool_limit:
+            self.logger.debug(f"    [Critic] Tool iteration limit ({self.max_tool_iterations}) reached, requesting final critique")
             # Add a message to prompt for final critique
             force_final_message = HumanMessage(
                 content="You have reached the maximum number of tool calls. Please provide your final critique now in the structured format based on the information gathered so far."
@@ -473,6 +481,7 @@ class Critic:
             }
         
         # Call LLM with tools (normal flow)
+        self.logger.debug(f"    [Critic] Calling LLM (iteration {tool_iterations + 1})...")
         response = self.llm_with_tools.invoke(messages)
         
         # Add response to messages
@@ -480,6 +489,7 @@ class Critic:
         
         # Check if we have a final response (no tool calls)
         if not (hasattr(response, "tool_calls") and response.tool_calls):
+            self.logger.debug(f"    [Critic] Received final response, parsing critique...")
             # Parse the final critique
             critique = self._parse_critique(state, updated_messages)
             
@@ -490,6 +500,13 @@ class Critic:
                 "messages": updated_messages,
                 "critique": critique,
             }
+        
+        # Log tool calls
+        num_tools = len(response.tool_calls) if response.tool_calls else 0
+        self.logger.debug(f"    [Critic] LLM requested {num_tools} tool call(s)")
+        for tool_call in response.tool_calls:
+            tool_name = tool_call.get('name', 'unknown')
+            self.logger.debug(f"    [Critic]   → Tool: {tool_name}")
         
         # Otherwise, return state with updated messages for tool execution
         return {
@@ -527,15 +544,17 @@ After evaluating the step (with or without tools), provide your final critique u
 
 ===LOGICAL_CORRECTNESS===
 [TRUE or FALSE]
+Only when this step exists critical logical errors you should mark FALSE. Otherwise, mark TRUE.
 
 ===LOGICAL_FEEDBACK===
-[If FALSE: Provide detailed explanation of the logical error. If TRUE: You can simply write "Correct" or leave empty to save time.]
+[If FALSE: Provide detailed explanation of the logical error. If TRUE: ONLY write "Correct", don't write anything else.]
 
 ===CALCULATION_CORRECTNESS===
 [TRUE or FALSE]
+Only when this step exists critical calculation errors you should mark FALSE. Otherwise, mark TRUE.
 
 ===CALCULATION_FEEDBACK===
-[If FALSE: Provide detailed explanation including tool verification results showing the error. If TRUE: You can simply write "Correct" or leave empty to save time.]
+[If FALSE: Provide detailed explanation including tool verification results showing the error. If TRUE: ONLY write "Correct", don't write anything else.]
 
 ===KNOWLEDGE_POINTS===
 [Comma-separated list of knowledge point tags, e.g., induction, gamma_distribution, transformation_of_variables]
@@ -696,7 +715,7 @@ Please analyze this step, using calculator tools to verify any calculations, the
         math_problem: str,
         solution_steps: List[dict],
         target_step_index: int
-    ) -> StepCritique:
+    ) -> Tuple[StepCritique, Dict[str, int]]:
         """
         Critique a specific step in a solution.
         
@@ -706,7 +725,8 @@ Please analyze this step, using calculator tools to verify any calculations, the
             target_step_index: Index of the step to critique (0-based)
             
         Returns:
-            Critique of the specified step
+            Tuple of (critique, token_usage) where token_usage is a dict with
+            'input_tokens' and 'output_tokens' keys
             
         Raises:
             ValueError: If target_step_index is out of range
@@ -729,14 +749,17 @@ Please analyze this step, using calculator tools to verify any calculations, the
         # Run the graph
         result = self.graph.invoke(initial_state)
         
-        return result["critique"]
+        # Extract token usage from messages
+        token_usage = self._extract_token_usage(result.get("messages", []))
+        
+        return result["critique"], token_usage
     
     def critique_all_steps(
         self,
         math_problem: str,
         solution_steps: List[dict],
         stop_at_first_error: bool = False
-    ) -> List[StepCritique]:
+    ) -> Tuple[List[StepCritique], Dict[str, int]]:
         """
         Critique all steps in a solution sequentially.
         
@@ -746,20 +769,54 @@ Please analyze this step, using calculator tools to verify any calculations, the
             stop_at_first_error: If True, stop critiquing after finding the first error
             
         Returns:
-            List of critiques, one for each step (or up to first error if stop_at_first_error=True)
+            Tuple of (critiques, total_token_usage) where:
+            - critiques: List of critiques for each step
+            - total_token_usage: Dict with 'input_tokens' and 'output_tokens' summed across all steps
         """
+        self.logger.info(f"  [Critic] Starting critique of {len(solution_steps)} steps")
+        self.logger.info(f"  [Critic] Problem: {math_problem[:80]}...")
+        
         critiques = []
+        total_input_tokens = 0
+        total_output_tokens = 0
         
         for i in range(len(solution_steps)):
-            critique = self.critique_step(math_problem, solution_steps, i)
+            step_desc = solution_steps[i].get('description', f'Step {i+1}')
+            self.logger.info(f"  [Critic] Critiquing step {i+1}/{len(solution_steps)}: {step_desc[:60]}...")
+            
+            critique, token_usage = self.critique_step(math_problem, solution_steps, i)
             critiques.append(critique)
+            
+            # Log critique result
+            is_logic_ok = critique['is_logically_correct']
+            is_calc_ok = critique['is_calculation_correct']
+            status = "✓ PASS" if (is_logic_ok and is_calc_ok) else "✗ FAIL"
+            self.logger.info(f"  [Critic]   → {status} [Logic: {'✓' if is_logic_ok else '✗'}, Calc: {'✓' if is_calc_ok else '✗'}]")
+            
+            if not is_logic_ok:
+                self.logger.info(f"  [Critic]   → Logic issue: {critique['logic_feedback']}...")
+            if not is_calc_ok:
+                self.logger.info(f"  [Critic]   → Calc issue: {critique['calculation_feedback']}...")
+            
+            # Accumulate token usage
+            total_input_tokens += token_usage.get('input_tokens', 0)
+            total_output_tokens += token_usage.get('output_tokens', 0)
             
             # Stop if we found an error and stop_at_first_error is True
             if stop_at_first_error:
                 if not critique['is_logically_correct'] or not critique['is_calculation_correct']:
+                    self.logger.info(f"  [Critic] Stopping early due to error in step {i+1}")
                     break
         
-        return critiques
+        self.logger.info(f"  [Critic] Critique complete: {len(critiques)} steps analyzed")
+        self.logger.info(f"  [Critic] Token usage: {total_input_tokens} input, {total_output_tokens} output")
+        
+        total_token_usage = {
+            'input_tokens': total_input_tokens,
+            'output_tokens': total_output_tokens
+        }
+        
+        return critiques, total_token_usage
     
     def format_critique(self, critique: StepCritique) -> str:
         """
@@ -805,3 +862,34 @@ Please analyze this step, using calculator tools to verify any calculations, the
             lines.append(f"  - {kp}")
         
         return "\n".join(lines)
+
+    def _extract_token_usage(self, messages: List[BaseMessage]) -> Dict[str, int]:
+        """
+        Extract token usage information from messages.
+        
+        Args:
+            messages: List of messages from the conversation
+            
+        Returns:
+            Dictionary with 'input_tokens' and 'output_tokens' keys
+        """
+        total_input_tokens = 0
+        total_output_tokens = 0
+        
+        for msg in messages:
+            if isinstance(msg, AIMessage):
+                # Check for usage_metadata (newer LangChain versions)
+                if hasattr(msg, 'usage_metadata') and msg.usage_metadata:
+                    total_input_tokens += msg.usage_metadata.get('input_tokens', 0)
+                    total_output_tokens += msg.usage_metadata.get('output_tokens', 0)
+                # Check for response_metadata (older pattern)
+                elif hasattr(msg, 'response_metadata') and msg.response_metadata:
+                    token_usage = msg.response_metadata.get('token_usage', {})
+                    total_input_tokens += token_usage.get('prompt_tokens', 0)
+                    total_output_tokens += token_usage.get('completion_tokens', 0)
+        
+        return {
+            'input_tokens': total_input_tokens,
+            'output_tokens': total_output_tokens
+        }
+
